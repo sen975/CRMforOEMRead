@@ -1,0 +1,17 @@
+-- AlterTable
+ALTER TABLE "oem_fit_scores" ADD COLUMN     "aiBreakdown" JSONB,
+ADD COLUMN     "aiGrade" TEXT,
+ADD COLUMN     "aiScore" INTEGER,
+ADD COLUMN     "developmentStrategy" JSONB,
+ADD COLUMN     "dimensionDetails" JSONB,
+ADD COLUMN     "emailEntryPoints" JSONB,
+ADD COLUMN     "manualBreakdown" JSONB,
+ADD COLUMN     "manualGrade" TEXT,
+ADD COLUMN     "manualNotes" TEXT,
+ADD COLUMN     "manualScore" INTEGER,
+ADD COLUMN     "manualUpdatedAt" TIMESTAMP(3),
+ADD COLUMN     "manualUpdatedById" TEXT,
+ADD COLUMN     "nextActions" JSONB,
+ADD COLUMN     "opportunities" JSONB,
+ADD COLUMN     "recommendedProducts" JSONB,
+ADD COLUMN     "risks" JSONB;

@@ -1,0 +1,964 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CustomerStage {
+  PENDING_RESEARCH
+  RESEARCHING
+  RESEARCHED
+  PENDING_EMAIL_GENERATION
+  PENDING_EMAIL_SEND
+  FIRST_EMAIL_SENT
+  PENDING_SECOND_FOLLOW_UP
+  REPLIED
+  REQUIREMENT_CONFIRMING
+  QUOTING
+  SAMPLING
+  NEGOTIATING
+  WON
+  PAUSED
+  INVALID
+  BLACKLISTED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  BLOCKED
+}
+
+enum DataScope {
+  SELF
+  TEAM
+  ALL
+}
+
+enum AiGenerationType {
+  WEBSITE_ANALYSIS
+  RESEARCH_REPORT
+  OEM_FIT_SCORE
+  EMAIL_DRAFT
+}
+
+enum AiRunStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum AiContentVersionType {
+  RAW_AI
+  HUMAN_EDIT
+  FINAL
+}
+
+enum WebsiteAnalysisStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum WebsitePageType {
+  HOME
+  PRODUCT_LIST
+  PRODUCT_DETAIL
+  BRAND
+  ABOUT
+  CONTACT
+  SUPPORT
+  OTHER
+}
+
+enum ResearchReportStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum EmailDraftStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  SENT
+}
+
+enum EmailDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum EmailMessageStatus {
+  DRAFT
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  RECEIVED
+}
+
+enum EmailAccountScope {
+  PERSONAL
+  SHARED
+}
+
+enum FollowUpTaskStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+enum FollowUpTaskType {
+  COMPLETE_RESEARCH
+  GENERATE_EMAIL
+  REVIEW_EMAIL
+  SECOND_FOLLOW_UP
+  THIRD_FOLLOW_UP
+  REQUIREMENT_CONFIRMATION
+  QUOTE_FOLLOW_UP
+  SAMPLE_FOLLOW_UP
+  STAGE_STALE_REMINDER
+  CUSTOM
+}
+
+enum BlacklistRuleType {
+  COMPANY_NAME
+  DOMAIN
+  EMAIL
+  COUNTRY
+  KEYWORD
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  EXPORT
+  SEND_EMAIL
+  APPROVE_EMAIL
+  GENERATE_AI
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+enum SampleStatus {
+  REQUESTED
+  PREPARING
+  SHIPPED
+  DELIVERED
+  FEEDBACK_RECEIVED
+  CLOSED
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teams           Team[]
+  users           User[]
+  sources         CustomerSource[]
+  types           CustomerType[]
+  customers       Customer[]
+  companyProfiles CompanyProfile[]
+  roles           Role[]
+  permissions     Permission[]
+
+  @@map("organizations")
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  organizationId String
+  parentId       String?
+  name           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  parent       Team?        @relation("TeamTree", fields: [parentId], references: [id])
+  children     Team[]       @relation("TeamTree")
+  users        User[]
+
+  @@index([organizationId])
+  @@map("teams")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  organizationId String
+  teamId         String?
+  email          String    @unique
+  passwordHash   String
+  name           String
+  title          String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization     Organization       @relation(fields: [organizationId], references: [id])
+  team             Team?              @relation(fields: [teamId], references: [id])
+  userRoles        UserRole[]
+  emailAccounts    EmailAccount[]
+  ownedCustomers   Customer[]         @relation("CustomerOwner")
+  createdCustomers Customer[]         @relation("CustomerCreator")
+  editedVersions   AiContentVersion[]
+  followUpTasks    FollowUpTask[]
+  auditLogs        AuditLog[]
+
+  @@index([organizationId])
+  @@index([teamId])
+  @@map("users")
+}
+
+model Role {
+  id             String    @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  dataScope      DataScope @default(SELF)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+
+  @@unique([organizationId, code])
+  @@map("roles")
+}
+
+model Permission {
+  id             String   @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  description    String?
+
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  rolePermissions RolePermission[]
+
+  @@unique([organizationId, code])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model CustomerSource {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  customers    Customer[]
+
+  @@unique([organizationId, name])
+  @@map("customer_sources")
+}
+
+model CustomerType {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  customers    Customer[]
+
+  @@unique([organizationId, name])
+  @@map("customer_types")
+}
+
+model Customer {
+  id             String        @id @default(cuid())
+  organizationId String
+  sourceId       String?
+  typeId         String?
+  ownerId        String?
+  createdById    String?
+  name           String
+  normalizedName String
+  websiteUrl     String?
+  websiteDomain  String?
+  country        String?
+  language       String?
+  timezone       String?
+  currency       String?
+  stage          CustomerStage @default(PENDING_RESEARCH)
+  riskLevel      RiskLevel     @default(LOW)
+  tags           String[]      @default([])
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization       Organization             @relation(fields: [organizationId], references: [id])
+  source             CustomerSource?          @relation(fields: [sourceId], references: [id])
+  type               CustomerType?            @relation(fields: [typeId], references: [id])
+  owner              User?                     @relation("CustomerOwner", fields: [ownerId], references: [id])
+  createdBy          User?                     @relation("CustomerCreator", fields: [createdById], references: [id])
+  contacts           Contact[]
+  stageHistories     CustomerStageHistory[]
+  assignmentHistory  CustomerAssignmentHistory[]
+  websiteAnalyses    WebsiteAnalysis[]
+  researchReports    ResearchReport[]
+  oemFitScores       OemFitScore[]
+  aiGenerationRuns   AiGenerationRun[]
+  emailThreads       EmailThread[]
+  emailDrafts        EmailDraft[]
+  followUpTasks      FollowUpTask[]
+  quotes             Quote[]
+  sampleRequests     SampleRequest[]
+
+  @@unique([organizationId, normalizedName])
+  @@index([organizationId, ownerId])
+  @@index([organizationId, stage])
+  @@index([websiteDomain])
+  @@map("customers")
+}
+
+model Contact {
+  id            String   @id @default(cuid())
+  customerId    String
+  name          String?
+  title         String?
+  department    String?
+  email         String?
+  phone         String?
+  linkedinUrl   String?
+  sourceUrl     String?
+  qualityScore  Int      @default(0)
+  isDecisionMaker Boolean @default(false)
+  isEmailVerified Boolean @default(false)
+  isOptOut      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([email])
+  @@map("contacts")
+}
+
+model CustomerStageHistory {
+  id         String        @id @default(cuid())
+  customerId String
+  fromStage  CustomerStage?
+  toStage    CustomerStage
+  reason     String?
+  changedById String?
+  createdAt  DateTime      @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@map("customer_stage_histories")
+}
+
+model CustomerAssignmentHistory {
+  id              String   @id @default(cuid())
+  customerId      String
+  previousOwnerId String?
+  newOwnerId      String?
+  assignedById    String?
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@map("customer_assignment_histories")
+}
+
+model CompanyProfile {
+  id             String   @id @default(cuid())
+  organizationId String
+  legalName      String
+  displayName    String
+  websiteUrl     String?
+  summary        String?
+  markets        String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  brands        Brand[]
+  capabilities  OemCapability[]
+  products      Product[]
+  certificates  Certificate[]
+  caseStudies   CaseStudy[]
+  emailMaterials EmailMaterial[]
+
+  @@index([organizationId])
+  @@map("company_profiles")
+}
+
+model Brand {
+  id               String   @id @default(cuid())
+  companyProfileId String
+  name             String
+  positioning      String?
+  targetMarkets    String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@map("brands")
+}
+
+model OemCapability {
+  id               String   @id @default(cuid())
+  companyProfileId String
+  name             String
+  category         String
+  description      String?
+  moq              String?
+  leadTime         String?
+  certifications   String[] @default([])
+  supportedMarkets String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@map("oem_capabilities")
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  companyProfileId String
+  sku              String?
+  name             String
+  category         String
+  description      String?
+  priceMin         Decimal?
+  priceMax         Decimal?
+  currency         String?
+  tags             String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@index([category])
+  @@map("products")
+}
+
+model Certificate {
+  id               String   @id @default(cuid())
+  companyProfileId String
+  name             String
+  issuer           String?
+  validUntil       DateTime?
+  fileAssetId      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@map("certificates")
+}
+
+model CaseStudy {
+  id               String   @id @default(cuid())
+  companyProfileId String
+  title            String
+  market           String?
+  category         String?
+  summary          String
+  result           String?
+  fileAssetId      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@map("case_studies")
+}
+
+model EmailMaterial {
+  id               String   @id @default(cuid())
+  companyProfileId String
+  name             String
+  materialType     String
+  content          String
+  tags             String[] @default([])
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  companyProfile CompanyProfile @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@map("email_materials")
+}
+
+model WebsiteAnalysis {
+  id                 String                @id @default(cuid())
+  customerId          String
+  aiGenerationRunId   String?
+  status              WebsiteAnalysisStatus @default(QUEUED)
+  startedAt           DateTime?
+  completedAt         DateTime?
+  homePageTitle       String?
+  detectedCountry     String?
+  detectedLanguage    String?
+  detectedTimezone    String?
+  detectedCurrency    String?
+  crawledUrls         String[]              @default([])
+  contactEvidence     Json?
+  productCategories   Json?
+  productCount        Int?
+  priceRange          Json?
+  pricePositioning    String?
+  websiteCompleteness Int?
+  imageStyle          String?
+  missingCategories   Json?
+  opportunities       Json?
+  risks               Json?
+  rawResult           Json?
+  errorMessage        String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  aiGenerationRun AiGenerationRun? @relation(fields: [aiGenerationRunId], references: [id])
+  pages           WebsiteAnalysisPage[]
+  products        WebsiteAnalysisProduct[]
+
+  @@index([customerId, createdAt])
+  @@map("website_analyses")
+}
+
+model WebsiteAnalysisPage {
+  id                String          @id @default(cuid())
+  websiteAnalysisId String
+  url               String
+  pageType          WebsitePageType @default(OTHER)
+  title             String?
+  language          String?
+  textSummary       String?
+  headings          Json?
+  links             Json?
+  images            Json?
+  contacts          Json?
+  priceSignals      Json?
+  depth             Int             @default(0)
+  httpStatus        Int?
+  errorMessage      String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  websiteAnalysis WebsiteAnalysis @relation(fields: [websiteAnalysisId], references: [id], onDelete: Cascade)
+
+  @@index([websiteAnalysisId, pageType])
+  @@index([url])
+  @@map("website_analysis_pages")
+}
+
+model WebsiteAnalysisProduct {
+  id                String   @id @default(cuid())
+  websiteAnalysisId String
+  sourcePageId      String?
+  name              String
+  category          String?
+  description       String?
+  keywords          String[] @default([])
+  evidenceUrls      String[] @default([])
+  imageUrls         String[] @default([])
+  priceSignals      Json?
+  confidence        Int      @default(50)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  websiteAnalysis WebsiteAnalysis @relation(fields: [websiteAnalysisId], references: [id], onDelete: Cascade)
+
+  @@index([websiteAnalysisId])
+  @@index([category])
+  @@map("website_analysis_products")
+}
+
+model ResearchReport {
+  id               String   @id @default(cuid())
+  customerId        String
+  aiGenerationRunId String?
+  status           ResearchReportStatus @default(QUEUED)
+  startedAt        DateTime?
+  completedAt      DateTime?
+  title             String
+  reportJson        Json?
+  finalMarkdown     String?
+  sourceEvidence    Json?
+  searchEnabled     Boolean  @default(false)
+  errorMessage      String?
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  aiGenerationRun AiGenerationRun? @relation(fields: [aiGenerationRunId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@map("research_reports")
+}
+
+model OemFitScore {
+  id               String   @id @default(cuid())
+  customerId        String
+  aiGenerationRunId String?
+  score             Int
+  grade             String
+  breakdown         Json
+  weights           Json
+  dimensionDetails  Json?
+  recommendedProducts Json?
+  developmentStrategy Json?
+  emailEntryPoints  Json?
+  opportunities     Json?
+  risks             Json?
+  nextActions       Json?
+  aiScore           Int?
+  aiGrade           String?
+  aiBreakdown       Json?
+  manualScore       Int?
+  manualGrade       String?
+  manualBreakdown   Json?
+  manualNotes       String?
+  manualUpdatedById String?
+  manualUpdatedAt   DateTime?
+  explanation       String?
+  createdById       String?
+  createdAt         DateTime @default(now())
+
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  aiGenerationRun AiGenerationRun? @relation(fields: [aiGenerationRunId], references: [id])
+
+  @@index([customerId, createdAt])
+  @@map("oem_fit_scores")
+}
+
+model AiGenerationRun {
+  id             String           @id @default(cuid())
+  organizationId String
+  customerId      String?
+  type            AiGenerationType
+  status          AiRunStatus      @default(QUEUED)
+  model           String
+  promptVersion   String
+  rawInput        Json
+  rawOutput       Json?
+  errorMessage    String?
+  tokenUsage      Json?
+  latencyMs       Int?
+  createdById     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  customer         Customer?          @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  versions         AiContentVersion[]
+  websiteAnalyses  WebsiteAnalysis[]
+  researchReports  ResearchReport[]
+  oemFitScores     OemFitScore[]
+  emailDrafts      EmailDraft[]
+
+  @@index([organizationId, type, createdAt])
+  @@index([customerId])
+  @@map("ai_generation_runs")
+}
+
+model AiContentVersion {
+  id              String               @id @default(cuid())
+  aiGenerationRunId String
+  versionType     AiContentVersionType
+  content          String
+  contentJson      Json?
+  editedById       String?
+  editReason       String?
+  createdAt        DateTime             @default(now())
+
+  aiGenerationRun AiGenerationRun @relation(fields: [aiGenerationRunId], references: [id], onDelete: Cascade)
+  editedBy        User?           @relation(fields: [editedById], references: [id])
+
+  @@index([aiGenerationRunId, createdAt])
+  @@map("ai_content_versions")
+}
+
+model EmailAccount {
+  id                    String   @id @default(cuid())
+  userId                String
+  scope                 EmailAccountScope @default(PERSONAL)
+  name                  String
+  email                 String
+  smtpHost              String
+  smtpPort              Int
+  smtpSecure            Boolean  @default(true)
+  smtpUsername          String
+  smtpPasswordEncrypted String
+  imapHost              String
+  imapPort              Int
+  imapSecure            Boolean  @default(true)
+  imapUsername          String
+  imapPasswordEncrypted String
+  encryptionKeyVersion  String
+  dailySendLimit        Int      @default(80)
+  hourlySendLimit       Int      @default(20)
+  isActive              Boolean  @default(true)
+  lastSyncAt            DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailDrafts   EmailDraft[]
+  emailMessages EmailMessage[]
+
+  @@index([userId])
+  @@index([scope, isActive])
+  @@map("email_accounts")
+}
+
+model EmailThread {
+  id          String   @id @default(cuid())
+  customerId  String
+  subject     String
+  lastMessageAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  messages EmailMessage[]
+
+  @@index([customerId, lastMessageAt])
+  @@map("email_threads")
+}
+
+model EmailDraft {
+  id               String           @id @default(cuid())
+  customerId        String
+  emailAccountId    String?
+  aiGenerationRunId String?
+  subject           String
+  body              String
+  toEmail           String
+  ccEmails          String[]         @default([])
+  bccEmails         String[]         @default([])
+  status            EmailDraftStatus @default(DRAFT)
+  reviewedById      String?
+  reviewedAt        DateTime?
+  reviewComment     String?
+  sentMessageId     String?
+  createdById       String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  customer        Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  emailAccount    EmailAccount?    @relation(fields: [emailAccountId], references: [id])
+  aiGenerationRun AiGenerationRun? @relation(fields: [aiGenerationRunId], references: [id])
+
+  @@index([customerId, status])
+  @@map("email_drafts")
+}
+
+model EmailMessage {
+  id              String             @id @default(cuid())
+  threadId         String?
+  emailAccountId   String?
+  direction        EmailDirection
+  status           EmailMessageStatus @default(DRAFT)
+  messageId        String?
+  inReplyTo        String?
+  referencesHeader String?
+  fromEmail        String
+  toEmails         String[]           @default([])
+  ccEmails         String[]           @default([])
+  subject          String
+  bodyText         String?
+  bodyHtml         String?
+  sentAt           DateTime?
+  receivedAt       DateTime?
+  rawHeaders       Json?
+  createdAt        DateTime           @default(now())
+
+  thread       EmailThread?     @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  emailAccount EmailAccount?    @relation(fields: [emailAccountId], references: [id])
+  attachments  EmailAttachment[]
+
+  @@unique([messageId])
+  @@index([threadId, createdAt])
+  @@index([fromEmail])
+  @@map("email_messages")
+}
+
+model EmailAttachment {
+  id             String   @id @default(cuid())
+  emailMessageId String
+  fileAssetId    String
+  filename       String
+  mimeType       String?
+  sizeBytes      Int?
+  createdAt      DateTime @default(now())
+
+  emailMessage EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@map("email_attachments")
+}
+
+model FollowUpTask {
+  id          String             @id @default(cuid())
+  customerId  String
+  ownerId     String
+  type        FollowUpTaskType
+  title       String
+  description String?
+  trigger     String?
+  dueAt       DateTime
+  completedAt DateTime?
+  status      FollowUpTaskStatus @default(OPEN)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  owner    User     @relation(fields: [ownerId], references: [id])
+
+  @@index([ownerId, status, dueAt])
+  @@index([customerId])
+  @@map("follow_up_tasks")
+}
+
+model Quote {
+  id          String      @id @default(cuid())
+  customerId  String
+  quoteNo     String
+  status      QuoteStatus @default(DRAFT)
+  currency    String
+  amount      Decimal
+  validUntil  DateTime?
+  fileAssetId String?
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([quoteNo])
+  @@index([customerId])
+  @@map("quotes")
+}
+
+model SampleRequest {
+  id             String       @id @default(cuid())
+  customerId      String
+  status          SampleStatus @default(REQUESTED)
+  productSummary  String
+  trackingNo      String?
+  carrier         String?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+  feedback        String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("sample_requests")
+}
+
+model BlacklistRule {
+  id             String            @id @default(cuid())
+  organizationId String
+  type           BlacklistRuleType
+  value          String
+  reason         String?
+  isActive       Boolean           @default(true)
+  createdById    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([organizationId, type, value])
+  @@map("blacklist_rules")
+}
+
+model FileAsset {
+  id             String   @id @default(cuid())
+  organizationId String
+  storageDriver  String
+  bucket         String?
+  objectKey      String
+  originalName   String
+  mimeType       String?
+  sizeBytes      Int?
+  entityType     String?
+  entityId       String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, entityType, entityId])
+  @@map("file_assets")
+}
+
+model AuditLog {
+  id             String      @id @default(cuid())
+  organizationId String
+  actorId        String?
+  action         AuditAction
+  entityType     String
+  entityId       String?
+  before         Json?
+  after          Json?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
