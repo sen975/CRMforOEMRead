@@ -36,6 +36,14 @@ npm run db:seed
 npm run dev
 ```
 
+数据库表结构由 Prisma migration 创建，不需要手动导入单独的 SQL 配置文件。建表 SQL 位于：
+
+```text
+apps/api/prisma/migrations/*/migration.sql
+```
+
+更完整的本地搭建说明见 [docs/setup.md](docs/setup.md)。
+
 Default seed login:
 
 - Email: `admin@oem-crm.local`

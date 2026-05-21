@@ -10,10 +10,13 @@
     "dev": "concurrently -n api,web -c teal,amber \"npm run dev -w @oem-crm/api\" \"npm run dev -w @oem-crm/web\"",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "db:generate": "npm run prisma:generate -w @oem-crm/api",
-    "db:migrate": "npm run prisma:migrate -w @oem-crm/api",
-    "db:seed": "npm run prisma:seed -w @oem-crm/api",
+    "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema apps/api/prisma/schema.prisma",
+    "db:seed": "prisma db seed --schema apps/api/prisma/schema.prisma",
     "db:import-eva-customers": "npm run prisma:import-eva-customers -w @oem-crm/api"
+  },
+  "prisma": {
+    "seed": "ts-node apps/api/prisma/seed.ts"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
