@@ -4,12 +4,31 @@ import { RequestUser } from "../../common/auth/current-user.decorator";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EmailSecretService } from "./email-secret.service";
 
+type EmailAccountLike = {
+  id: string;
+  imapHost: string;
+  imapPort: number;
+  imapSecure: boolean;
+  imapUsername: string;
+  imapPasswordEncrypted: string;
+};
+
 @Injectable()
 export class ImapSyncService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly secrets: EmailSecretService
   ) {}
+
+  async verifyAccount(account: EmailAccountLike) {
+    const client = this.createClient(account);
+    await client.connect();
+    try {
+      return { ok: true };
+    } finally {
+      await client.logout().catch(() => undefined);
+    }
+  }
 
   async syncForUser(user: RequestUser) {
     const accounts = await this.prisma.emailAccount.findMany({
@@ -28,15 +47,7 @@ export class ImapSyncService {
   }
 
   private async syncAccount(account: Awaited<ReturnType<PrismaService["emailAccount"]["findMany"]>>[number]) {
-    const client = new ImapFlow({
-      host: account.imapHost,
-      port: account.imapPort,
-      secure: account.imapSecure,
-      auth: {
-        user: account.imapUsername,
-        pass: this.secrets.decrypt(account.imapPasswordEncrypted)
-      }
-    });
+    const client = this.createClient(account);
 
     let imported = 0;
     await client.connect();
@@ -92,6 +103,18 @@ export class ImapSyncService {
     }
 
     return { accountId: account.id, imported };
+  }
+
+  private createClient(account: EmailAccountLike) {
+    return new ImapFlow({
+      host: account.imapHost,
+      port: account.imapPort,
+      secure: account.imapSecure,
+      auth: {
+        user: account.imapUsername,
+        pass: this.secrets.decrypt(account.imapPasswordEncrypted)
+      }
+    });
   }
 
   private async findThreadForInbound(fromEmail: string, inReplyTo?: string) {

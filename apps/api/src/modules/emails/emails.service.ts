@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { ImapSyncService } from "./imap-sync.service";
 import { AiContentVersionType, AiGenerationType, CustomerStage, EmailDraftStatus } from "@oem-crm/shared";
 import { RequestUser } from "../../common/auth/current-user.decorator";
 import { buildCustomerDataScopeWhere } from "../../common/query/data-scope";
@@ -10,6 +11,7 @@ import { EmailSecretService } from "./email-secret.service";
 import { ApproveEmailDraftDto } from "./dto/approve-email-draft.dto";
 import { CreateEmailAccountDto } from "./dto/create-email-account.dto";
 import { GenerateEmailDraftDto } from "./dto/generate-email-draft.dto";
+import { UpdateEmailAccountDto } from "./dto/update-email-account.dto";
 import { UpdateEmailDraftDto } from "./dto/update-email-draft.dto";
 import { SmtpService } from "./smtp.service";
 
@@ -21,7 +23,8 @@ export class EmailsService {
     private readonly aiProvider: AiProviderService,
     private readonly secrets: EmailSecretService,
     private readonly compliance: EmailComplianceService,
-    private readonly smtp: SmtpService
+    private readonly smtp: SmtpService,
+    private readonly imapSync: ImapSyncService
   ) {}
 
   listAccounts(user: RequestUser) {
@@ -37,9 +40,11 @@ export class EmailsService {
         smtpHost: true,
         smtpPort: true,
         smtpSecure: true,
+        smtpUsername: true,
         imapHost: true,
         imapPort: true,
         imapSecure: true,
+        imapUsername: true,
         dailySendLimit: true,
         hourlySendLimit: true,
         isActive: true,
@@ -78,7 +83,7 @@ export class EmailsService {
     });
   }
 
-  async updateAccount(user: RequestUser, id: string, dto: Partial<CreateEmailAccountDto>) {
+  async updateAccount(user: RequestUser, id: string, dto: UpdateEmailAccountDto) {
     const account = await this.findAccount(user, id);
     if (account.userId !== user.id && !user.roleCodes.includes("ADMIN")) {
       throw new ForbiddenException("Cannot update this email account");
@@ -103,15 +108,40 @@ export class EmailsService {
         imapUsername: dto.imapUsername,
         imapPasswordEncrypted: dto.imapPassword ? this.secrets.encrypt(dto.imapPassword).value : undefined,
         dailySendLimit: dto.dailySendLimit,
-        hourlySendLimit: dto.hourlySendLimit
+        hourlySendLimit: dto.hourlySendLimit,
+        isActive: dto.isActive
       }
     });
   }
 
   async testAccount(user: RequestUser, id: string) {
     const account = await this.findAccount(user, id);
-    await this.smtp.verify(account);
-    return { ok: true };
+
+    const smtp = { ok: false, message: "SMTP 未测试。" };
+    const imap = { ok: false, message: "IMAP 未测试。" };
+
+    try {
+      await this.smtp.verify(account);
+      smtp.ok = true;
+      smtp.message = "SMTP 连接正常。";
+    } catch (error) {
+      smtp.message = mapSmtpTestError(error);
+    }
+
+    try {
+      await this.imapSync.verifyAccount(account);
+      imap.ok = true;
+      imap.message = "IMAP 连接正常。";
+    } catch (error) {
+      imap.message = mapImapTestError(error);
+    }
+
+    return {
+      overallOk: smtp.ok && imap.ok,
+      smtp,
+      imap,
+      message: buildEmailTestSummary(smtp, imap)
+    };
   }
 
   async generateDraft(user: RequestUser, customerId: string, dto: GenerateEmailDraftDto) {
@@ -413,4 +443,51 @@ export class EmailsService {
 
 function buildSubject(customerName: string) {
   return `OEM cooperation idea for ${customerName}`;
+}
+
+function buildEmailTestSummary(smtp: { ok: boolean; message: string }, imap: { ok: boolean; message: string }) {
+  if (smtp.ok && imap.ok) {
+    return "SMTP 与 IMAP 均连接正常。";
+  }
+  if (smtp.ok && !imap.ok) {
+    return `SMTP 正常，${imap.message} 该邮箱当前可用于发信，但无法同步回复。`;
+  }
+  if (!smtp.ok && imap.ok) {
+    return `IMAP 正常，${smtp.message} 该邮箱当前可用于收信同步，但无法用于发信。`;
+  }
+  return `${smtp.message} ${imap.message}`.trim();
+}
+
+function mapSmtpTestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
+  const response = typeof error === "object" && error && "response" in error ? String((error as { response?: unknown }).response ?? "") : "";
+  const detail = `${code} ${message} ${response}`.toLowerCase();
+
+  if (detail.includes("invalid login") || detail.includes("auth") || detail.includes("eauth") || detail.includes("535") || detail.includes("username and password not accepted")) {
+    return "SMTP 认证失败，请检查用户名或授权码是否正确。";
+  }
+  if (detail.includes("etimedout") || detail.includes("econnection") || detail.includes("esocket") || detail.includes("ssl") || detail.includes("tls") || detail.includes("certificate") || detail.includes("greeting never received")) {
+    return "SMTP 连接失败，请检查服务器地址、端口或 SSL 配置是否正确。";
+  }
+  return "SMTP 测试失败，请检查服务器地址、端口、SSL、用户名和授权码配置。";
+}
+
+function mapImapTestError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const response = typeof error === "object" && error && "response" in error ? String((error as { response?: unknown }).response ?? "") : "";
+  const responseText = typeof error === "object" && error && "responseText" in error ? String((error as { responseText?: unknown }).responseText ?? "") : "";
+  const authenticationFailed = typeof error === "object" && error && "authenticationFailed" in error ? Boolean((error as { authenticationFailed?: unknown }).authenticationFailed) : false;
+  const detail = `${message} ${response} ${responseText}`.toLowerCase();
+
+  if (detail.includes("custom imap off") || detail.includes("imap off")) {
+    return "IMAP 未开启，请先在邮箱后台启用 IMAP 或第三方客户端访问。";
+  }
+  if (authenticationFailed || detail.includes("login failed") || detail.includes("authentication failed") || detail.includes("invalid credentials")) {
+    return "IMAP 登录失败，请检查用户名或授权码是否正确。";
+  }
+  if (detail.includes("etimedout") || detail.includes("econnection") || detail.includes("esocket") || detail.includes("ssl") || detail.includes("tls") || detail.includes("certificate") || detail.includes("greeting never received")) {
+    return "IMAP 连接失败，请检查服务器地址、端口或 SSL 配置是否正确。";
+  }
+  return "IMAP 测试失败，请检查是否已开启 IMAP、服务器地址、端口、SSL、用户名和授权码配置。";
 }
