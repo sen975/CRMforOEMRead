@@ -4,6 +4,8 @@ import { CheckCircle2, Inbox, Send, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiGet, apiPatch, apiPost } from "../api/http";
+import { showClientToast } from "../components/Toast";
+import { useSse } from "../hooks/useSse";
 
 type EmailAccount = {
   id: string;
@@ -38,6 +40,10 @@ export function EmailCenterPage() {
   const { data: drafts = [] } = useQuery({ queryKey: ["email-drafts", "pending"], queryFn: () => apiGet<EmailDraft[]>("/email-drafts") });
   const { data: threads = [] } = useQuery({ queryKey: ["email-threads"], queryFn: () => apiGet<EmailThread[]>("/email-threads") });
 
+  useSse("inbound-mail.received", () => {
+    queryClient.invalidateQueries({ queryKey: ["email-threads"] });
+  });
+
   const createAccount = useMutation({
     mutationFn: () => apiPost("/email-accounts", normalizeAccount(accountForm)),
     onSuccess: () => {
@@ -48,6 +54,7 @@ export function EmailCenterPage() {
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "保存失败")
   });
+
   const updateAccount = useMutation({
     mutationFn: () => apiPatch(`/email-accounts/${editingId}`, normalizeAccount(accountForm)),
     onSuccess: () => {
@@ -58,24 +65,38 @@ export function EmailCenterPage() {
     },
     onError: (error) => setMessage(error instanceof Error ? error.message : "保存失败")
   });
+
   const sync = useMutation({
-    mutationFn: () => apiPost("/email-sync/run"),
-    onSuccess: () => {
-      setMessage("邮箱同步已完成。");
+    mutationFn: () => apiPost<{ syncedAccounts?: number }>("/email-sync/run"),
+    onSuccess: (result) => {
+      showClientToast({
+        type: "success",
+        title: "邮箱同步完成",
+        message: `已处理 ${result?.syncedAccounts ?? 0} 个邮箱账号`
+      });
       queryClient.invalidateQueries({ queryKey: ["email-threads"] });
       queryClient.invalidateQueries({ queryKey: ["email-accounts"] });
     },
-    onError: (error) => setMessage(error instanceof Error ? error.message : "同步失败")
+    onError: (error) => {
+      showClientToast({
+        type: "error",
+        title: "邮箱同步失败",
+        message: error instanceof Error ? error.message : "同步失败"
+      });
+    }
   });
+
   const testAccount = useMutation({
     mutationFn: (accountId: string) => apiPost<{ overallOk: boolean; smtp: { ok: boolean; message: string }; imap: { ok: boolean; message: string }; message: string }>(`/email-accounts/${accountId}/test`),
     onSuccess: (result) => setMessage(result.message || "邮箱连接测试成功。"),
     onError: (error) => setMessage(error instanceof Error ? error.message : "测试失败")
   });
+
   const toggleAccount = useMutation({
     mutationFn: (account: EmailAccount) => apiPatch(`/email-accounts/${account.id}`, { isActive: !account.isActive }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["email-accounts"] })
   });
+
   function startEdit(account: EmailAccount) {
     setEditingId(account.id);
     setAccountForm(accountToForm(account));
@@ -108,12 +129,15 @@ export function EmailCenterPage() {
           {sync.isPending ? "同步中..." : "同步邮箱"}
         </button>
       </header>
+
       {message ? <section className="panel loading-state">{message}</section> : null}
+
       <div className="metric-grid compact">
         <MiniMetric icon={<Inbox size={17} />} label="邮箱账号" value={`${accounts.length}`} />
         <MiniMetric icon={<Send size={17} />} label="邮件线程" value={`${threads.length}`} />
         <MiniMetric icon={<CheckCircle2 size={17} />} label="草稿/审核" value={`${drafts.length}`} />
       </div>
+
       <nav className="tab-bar">
         <Link className={`tab-link ${folder === "accounts" ? "active" : ""}`} to="/email-center/accounts">邮箱配置</Link>
         <Link className={`tab-link ${folder === "drafts" ? "active" : ""}`} to="/email-center/drafts">邮件草稿</Link>

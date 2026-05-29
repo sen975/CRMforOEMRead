@@ -6,13 +6,13 @@ import { GenerateEmailDraftDto } from "./dto/generate-email-draft.dto";
 import { UpdateEmailAccountDto } from "./dto/update-email-account.dto";
 import { UpdateEmailDraftDto } from "./dto/update-email-draft.dto";
 import { EmailsService } from "./emails.service";
-import { ImapSyncService } from "./imap-sync.service";
+import { ImapIdleService } from "./imap-idle.service";
 
 @Controller()
 export class EmailsController {
   constructor(
     private readonly emailsService: EmailsService,
-    private readonly imapSyncService: ImapSyncService
+    private readonly imapIdleService: ImapIdleService
   ) {}
 
   @Get("email-accounts")
@@ -96,6 +96,6 @@ export class EmailsController {
 
   @Post("email-sync/run")
   runSync(@CurrentUser() user: RequestUser) {
-    return this.imapSyncService.syncForUser(user);
+    return this.imapIdleService.manualSyncForUser(user.id);
   }
 }

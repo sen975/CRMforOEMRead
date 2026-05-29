@@ -76,7 +76,8 @@ async function refreshAccessToken() {
   }
 }
 
-function clearSessionAndRedirect() {
+export function clearSessionAndRedirect() {
+  import("../hooks/useSse").then(({ closeSse }) => closeSse());
   localStorage.removeItem("accessToken");
   localStorage.removeItem("refreshToken");
   localStorage.removeItem("currentUser");
